@@ -117,6 +117,553 @@
             background-color: #b30000;
             transition: width 0.2s ease-in-out;
         }
+        #key-icon {
+            width: 40px;
+            height: 40px;
+            background-color: rgba(0,0,0,0.5);
+            border: 2px solid #fff;
+            border-radius: 5px;
+            font-size: 30px;
+            text-align: center;
+            line-height: 40px;
+            color: #ffd700;
+            display: none; /* Hidden by default */
+        }
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 4px;
+            height: 4px;
+            background-color: rgba(255, 255, 255, 0.5);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            display: none;
+        }
+        #damage-flash {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(255, 0, 0, 0.5);
+            opacity: 0;
+            pointer-events: none;
+            z-index: 9999;
+        }
+        @keyframes flash {
+            0% { opacity: 0.7; }
+            100% { opacity: 0; }
+        }
+        /* --- MOD MENU STYLES --- */
+        #mod-menu {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background-color: rgba(20, 20, 20, 0.9);
+            border: 1px solid #ff4444;
+            border-radius: 8px;
+            padding: 15px;
+            z-index: 10000;
+            display: none;
+            color: #fff;
+            width: 280px;
+            box-shadow: 0 0 20px rgba(255,0,0,0.5);
+        }
+        #mod-menu h2 {
+            margin-top: 0;
+            font-size: 1.2em;
+            color: #ff4444;
+            text-align: center;
+            border-bottom: 1px solid #ff4444;
+            padding-bottom: 5px;
+            margin-bottom: 15px;
+        }
+        .mod-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .mod-item label {
+            user-select: none;
+        }
+        .mod-slider {
+            width: 140px;
+        }
+        .mod-button {
+            background-color: #555;
+            border: 1px solid #888;
+            color: white;
+            padding: 8px;
+            width: 100%;
+            margin-top: 5px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .mod-button:hover {
+            background-color: #777;
+        }
+    </style>
+</head>
+<body>
+    <div id="damage-flash"></div>
+    <div id="blocker">
+        <!-- Start Menu with Difficulty Selection -->
+        <div id="start-menu" class="ui-container">
+            <h1>The Maze</h1>
+            <p>Select your difficulty. Find the key to unlock the door to the exit.</p>
+            <div class="button-grid">
+                <div id="easy-button" class="button">Easy</div>
+                <div id="medium-button" class="button">Medium</div>
+                <div id="hard-button" class="button">Hard</div>
+                <div id="extreme-button" class="button">Extreme</div>
+            </div>
+        </div>
+        <!-- Pause Menu -->
+        <div id="pause-menu" class="ui-container">
+            <h1>Paused</h1>
+            <div id="resume-button" class="button">Resume</div>
+            <div id="restart-button-pause" class="button">Restart</div>
+        </div>
+        <!-- Death Screen -->
+        <div id="death-screen" class="ui-container">
+            <img id="jumpscare-image" src="" alt="You were caught">
+            <div id="death-content">
+                <h1>You Died</h1>
+                <div id="restart-button-death" class="button">Try Again</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MOD MENU HTML -->
+    <div id="mod-menu">
+        <h2>Mod Menu (Alt+X)</h2>
+        <div class="mod-item">
+            <label for="noclip-toggle">Noclip</label>
+            <input type="checkbox" id="noclip-toggle">
+        </div>
+        <div class="mod-item">
+            <label for="esp-toggle">Bot ESP</label>
+            <input type="checkbox" id="esp-toggle">
+        </div>
+        <div class="mod-item">
+            <label for="fly-toggle">Fly</label>
+            <input type="checkbox" id="fly-toggle">
+        </div>
+        <div class="mod-item">
+            <label for="stamina-toggle">Infinite Stamina</label>
+            <input type="checkbox" id="stamina-toggle">
+        </div>
+        <div class="mod-item">
+            <label for="speed-slider">Walk Speed</label>
+            <input type="range" id="speed-slider" min="1" max="50" value="5" class="mod-slider">
+        </div>
+        <button id="teleport-exit-btn" class="mod-button">Teleport to Exit</button>
+        <button id="give-key-btn" class="mod-button">Give Key</button>
+        <button id="heal-btn" class="mod-button">Heal</button>
+    </div>
+
+    <div id="hud">
+        <div id="key-icon">🔑</div>
+        <div id="health-bar-container" class="bar-container">
+            <div id="health-bar"></div>
+        </div>
+        <div id="stamina-bar-container" class="bar-container">
+            <div id="stamina-bar"></div>
+        </div>
+    </div>
+    <div id="crosshair"></div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/"
+            }
+        }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+        // --- GAME CONSTANTS ---
+        const MAZE_SIZE = 25;
+        const WALL_HEIGHT = 5;
+        const CELL_SIZE = 5;
+        const PLAYER_SPRINT_SPEED_MULTIPLIER = 1.8;
+        const ENEMY_SPEED = 4.8;
+        const PLAYER_HEALTH_MAX = 100;
+        const STAMINA_MAX = 100;
+        const STAMINA_DEPLETE_RATE = 25;
+        const STAMINA_REGEN_RATE = 10;
+        const MAZE_COMPLEXITY_FACTOR = Math.floor((MAZE_SIZE * MAZE_SIZE) / 15);
+
+        // --- DIFFICULTY SETTINGS ---
+        const DIFFICULTY_SETTINGS = {
+            EASY: { numEnemies: 1, lightIntensity: { hemi: 2.5, ambient: 1.5, player: 6 }, exitDistanceFactor: 0.25, enemyDamage: 25, healthRegenRate: 5, damageCooldown: 2 },
+            MEDIUM: { numEnemies: 2, lightIntensity: { hemi: 2.0, ambient: 1.2, player: 5 }, exitDistanceFactor: 0.5, enemyDamage: 35, healthRegenRate: 4, damageCooldown: 1.5 },
+            HARD: { numEnemies: 3, lightIntensity: { hemi: 1.5, ambient: 0.8, player: 4 }, exitDistanceFactor: 0.75, enemyDamage: 40, healthRegenRate: 3, damageCooldown: 1.2 },
+            EXTREME: { numEnemies: 4, lightIntensity: { hemi: 1.0, ambient: 0.5, player: 3.5 }, exitDistanceFactor: 0.9, enemyDamage: 50, healthRegenRate: 2, damageCooldown: 1.0 }
+        };
+
+        // --- SCENE SETUP ---
+        let scene, camera, renderer, controls;
+        let playerObject, playerVelocity = new THREE.Vector3();
+        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false, isSprinting = false, moveUp = false, moveDown = false;
+        let lastTime = performance.now();
+        const mazeObjects = [];
+        let mazeGrid = [];
+        let enemies = [];
+        let exitLight, hemiLight, ambientLight, playerLight;
+        let keyObject, doorObject;
+        let espHelpers;
+
+        // --- GAME STATE ---
+        let gameState = 'MENU';
+        let currentDifficulty = 'MEDIUM';
+        let playerHealth = PLAYER_HEALTH_MAX;
+        let stamina = STAMINA_MAX;
+        let damageCooldownTimer = 0;
+        let hasKey = false;
+        
+        // --- MOD MENU STATE ---
+        let isNoclip = false;
+        let isEsp = false;
+        let isFlying = false;
+        let isInfStamina = false;
+
+        // --- DOM ELEMENTS ---
+        const blocker = document.getElementById('blocker');
+        const startMenu = document.getElementById('start-menu');
+        const pauseMenu = document.getElementById('pause-menu');
+        const deathScreen = document.getElementById('death-screen');
+        const resumeButton = document.getElementById('resume-button');
+        const restartButtonPause = document.getElementById('restart-button-pause');
+        const restartButtonDeath = document.getElementById('restart-button-death');
+        const hud = document.getElementById('hud');
+        const healthBar = document.getElementById('health-bar');
+        const staminaBar = document.getElementById('stamina-bar');
+        const keyIcon = document.getElementById('key-icon');
+        const crosshair = document.getElementById('crosshair');
+        const jumpscareImg = document.getElementById('jumpscare-image');
+        const damageFlash = document.getElementById('damage-flash');
+        const modMenu = document.getElementById('mod-menu');
+
+        // --- TEXTURES AND MATERIALS ---
+        const textureLoader = new THREE.TextureLoader();
+        const loadTexture = (primaryUrl, fallbackUrl) => {
+            const texture = textureLoader.load(primaryUrl, undefined, undefined, (err) => {
+                textureLoader.load(fallbackUrl, (loadedFallbackTexture) => {
+                    texture.image = loadedFallbackTexture.image;
+                    texture.needsUpdate = true;
+                });
+            });
+            texture.wrapS = THREE.RepeatWrapping; texture.wrapT = THREE.RepeatWrapping;
+            return texture;
+        };
+        const wallTexture = loadTexture('wall.png', 'https://placehold.co/512x512/333333/555555?text=Wall');
+        const wallMaterial = new THREE.MeshStandardMaterial({ map: wallTexture, roughness: 0.7, metalness: 0.2 });
+        const floorTexture = loadTexture('floor.png', 'https://placehold.co/512x512/444444/666666?text=Floor');
+        const floorMaterial = new THREE.MeshStandardMaterial({ map: floorTexture, roughness: 0.9, metalness: 0.1 });
+        const roofTexture = loadTexture('roof.png', 'https://placehold.co/512x512/1a1a1a/2a2a2a?text=Roof');
+        const roofMaterial = new THREE.MeshStandardMaterial({ map: roofTexture });
+        const doorMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.5 });
+        const enemyTextureUrl = 'tylerhall.png';
+        const enemyTexture = loadTexture(enemyTextureUrl, 'https://placehold.co/256x256/000000/ff0000?text=ENEMY');
+        const enemyMaterial = new THREE.MeshBasicMaterial({ map: enemyTexture, transparent: true });
+        jumpscareImg.onerror = () => { jumpscareImg.src = 'https://placehold.co/1920x1080/000000/ff0000?text=You+Died'; };
+        jumpscareImg.src = enemyTextureUrl;
+
+        // --- INITIALIZATION ---
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x000000);
+            scene.fog = new THREE.Fog(0x000000, 15, 45);
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.body.appendChild(renderer.domElement);
+            controls = new PointerLockControls(camera, renderer.domElement);
+            playerObject = controls.getObject();
+            scene.add(playerObject);
+            
+            espHelpers = new THREE.Group();
+            scene.add(espHelpers);
+
+            hemiLight = new THREE.HemisphereLight(0x888888, 0x000000, 1); scene.add(hemiLight);
+            ambientLight = new THREE.AmbientLight(0x909090, 1); scene.add(ambientLight);
+            playerLight = new THREE.PointLight(0xffffff, 1, 35); camera.add(playerLight);
+            playerLight.position.set(0, 1, 0);
+
+            setupEventListeners();
+            animate();
+        }
+
+        // --- GAME LOGIC ---
+        function startGame(difficulty) {
+            currentDifficulty = difficulty;
+            const settings = DIFFICULTY_SETTINGS[difficulty];
+
+            hemiLight.intensity = settings.lightIntensity.hemi;
+            ambientLight.intensity = settings.lightIntensity.ambient;
+            playerLight.intensity = settings.lightIntensity.player;
+
+            mazeObjects.forEach(obj => scene.remove(obj)); mazeObjects.length = 0;
+            enemies.forEach(e => scene.remove(e.mesh)); enemies = [];
+            if (exitLight) scene.remove(exitLight);
+            if (keyObject) scene.remove(keyObject);
+            
+            playerVelocity.set(0, 0, 0);
+            playerHealth = PLAYER_HEALTH_MAX; stamina = STAMINA_MAX;
+            hasKey = false; keyIcon.style.display = 'none';
+            updateHealthBar(); updateStaminaBar();
+
+            mazeGrid = generateMaze(MAZE_SIZE, MAZE_SIZE);
+            addComplexityToMaze(mazeGrid); removeDeadEnds(mazeGrid);
+            
+            const { exitPos, doorPos, keyPos } = placeGameObjects(settings.exitDistanceFactor);
+            buildMaze(doorPos);
+
+            playerObject.position.set((1 - MAZE_SIZE / 2 + 0.5) * CELL_SIZE, WALL_HEIGHT / 2, (1 - MAZE_SIZE / 2 + 0.5) * CELL_SIZE);
+            
+            const enemyStartPositions = [ {x: MAZE_SIZE - 2, z: MAZE_SIZE - 2}, {x: 1, z: MAZE_SIZE - 2}, {x: MAZE_SIZE - 2, z: 1}, {x: MAZE_SIZE / 2, z: MAZE_SIZE - 2} ];
+            for (let i = 0; i < settings.numEnemies; i++) {
+                 const mesh = new THREE.Mesh(new THREE.PlaneGeometry(CELL_SIZE * 0.8, CELL_SIZE * 0.8), enemyMaterial);
+                 scene.add(mesh);
+                 const startPos = enemyStartPositions[i % enemyStartPositions.length];
+                 mesh.position.set((startPos.x - MAZE_SIZE / 2 + 0.5) * CELL_SIZE, WALL_HEIGHT / 2, (startPos.z - MAZE_SIZE / 2 + 0.5) * CELL_SIZE);
+                 enemies.push({ mesh, gridX: startPos.x, gridZ: startPos.z, path: [], pathCooldown: Math.random() * 0.5 + 0.2 });
+            }
+            toggleEsp(isEsp); // Refresh ESP boxes for new enemies
+            
+            exitLight = new THREE.PointLight(0x00ff00, 5, 10);
+            exitLight.position.set((exitPos.x - MAZE_SIZE / 2 + 0.5) * CELL_SIZE, WALL_HEIGHT / 2, (exitPos.z - MAZE_SIZE / 2 + 0.5) * CELL_SIZE);
+            scene.add(exitLight);
+            
+            const keyGeometry = new THREE.BoxGeometry(CELL_SIZE/4, CELL_SIZE/4, CELL_SIZE/4);
+            const keyMaterial = new THREE.MeshStandardMaterial({color: 0xffd700, emissive: 0xffd700, emissiveIntensity: 2});
+            keyObject = new THREE.Mesh(keyGeometry, keyMaterial);
+            keyObject.position.set((keyPos.x - MAZE_SIZE / 2 + 0.5) * CELL_SIZE, WALL_HEIGHT / 2, (keyPos.z - MAZE_SIZE / 2 + 0.5) * CELL_SIZE);
+            scene.add(keyObject);
+
+            gameState = 'PLAYING';
+            hud.style.display = 'flex';
+            crosshair.style.display = 'block';
+        }
+
+        function placeGameObjects(exitDistanceFactor) {
+            let exitPos = { x: 0, z: 0 }, doorPos = { x: 0, z: 0 }, keyPos = { x: 0, z: 0 };
+            const pathTiles = [];
+            for(let z = 1; z < MAZE_SIZE - 1; z++) for(let x = 1; x < MAZE_SIZE - 1; x++) if (mazeGrid[z][x] === 0) pathTiles.push({x, z});
+            pathTiles.sort((a, b) => (b.x + b.z) - (a.x + a.z));
+            exitPos = pathTiles[Math.floor((pathTiles.length -1) * (1 - exitDistanceFactor))];
+            const neighbors = getNeighbors(exitPos.x, exitPos.z, true);
+            if (neighbors.length > 0) {
+                 doorPos = neighbors[Math.floor(Math.random() * neighbors.length)];
+                 mazeGrid[doorPos.z][doorPos.x] = 2;
+            } else { doorPos = {x: exitPos.x - 1, z: exitPos.z}; mazeGrid[doorPos.z][doorPos.x] = 2; }
+            pathTiles.sort((a, b) => (Math.abs(a.x - exitPos.x) + Math.abs(a.z - exitPos.z)) - (Math.abs(b.x - exitPos.x) + Math.abs(b.z - exitPos.z)));
+            keyPos = pathTiles[pathTiles.length - 1 - Math.floor(Math.random() * 5)];
+            return { exitPos, doorPos, keyPos };
+        }
+        
+        // --- MAZE GENERATION AND PATHFINDING (NO CHANGES) ---
+        function generateMaze(w, h) { const m=Array(h).fill(null).map(()=>Array(w).fill(1)),s=[],x=1,z=1;m[z][x]=0;s.push([x,z]);while(s.length>0){const[cx,cz]=s[s.length-1],n=[];for(const[dx,dz]of[[0,-2],[0,2],[-2,0],[2,0]]){const nx=cx+dx,nz=cz+dz;if(nx>0&&nx<w-1&&nz>0&&nz<h-1&&m[nz][nx]===1)n.push([nx,nz])}if(n.length>0){const[nx,nz]=n[Math.floor(Math.random()*n.length)];m[nz][nx]=0;m[cz+(nz-cz)/2][cx+(nx-cx)/2]=0;s.push([nx,nz])}else s.pop()}return m }
+        function addComplexityToMaze(m) { for(let i=0;i<MAZE_COMPLEXITY_FACTOR;i++){const x=Math.floor(Math.random()*(MAZE_SIZE-2))+1,z=Math.floor(Math.random()*(MAZE_SIZE-2))+1;if(m[z][x]===1){if((m[z][x-1]===0&&m[z][x+1]===0)||(m[z-1][x]===0&&m[z+1][x]===0))m[z][x]=0}}}
+        function removeDeadEnds(m){for(let i=0;i<2;i++){const d=[];for(let z=1;z<MAZE_SIZE-1;z++)for(let x=1;x<MAZE_SIZE-1;x++)if(m[z][x]===0){let w=0;if(m[z-1][x]===1)w++;if(m[z+1][x]===1)w++;if(m[z][x-1]===1)w++;if(m[z][x+1]===1)w++;if(w>=3)d.push({x,z})}d.forEach(e=>{if(Math.random()>0.4){const p=[];if(e.z>1&&m[e.z-1][e.x]===1)p.push({x:e.x,z:e.z-1});if(e.z<MAZE_SIZE-2&&m[e.z+1][e.x]===1)p.push({x:e.x,z:e.z+1});if(e.x>1&&m[e.z][e.x-1]===1)p.push({x:e.x-1,z:e.z});if(e.x<MAZE_SIZE-2&&m[e.z][e.x+1]===1)p.push({x:e.x+1,z:e.z});if(p.length>0){const w=p[Math.floor(Math.random()*p.length)];m[w.z][w.x]=0}}})}}
+        function buildMaze(doorPos) { const wg=new THREE.BoxGeometry(CELL_SIZE,WALL_HEIGHT,CELL_SIZE),fg=new THREE.PlaneGeometry(MAZE_SIZE*CELL_SIZE,MAZE_SIZE*CELL_SIZE);for(let z=0;z<MAZE_SIZE;z++)for(let x=0;x<MAZE_SIZE;x++){if(mazeGrid[z][x]===1){const w=new THREE.Mesh(wg,wallMaterial);w.position.set((x-MAZE_SIZE/2+.5)*CELL_SIZE,WALL_HEIGHT/2,(z-MAZE_SIZE/2+.5)*CELL_SIZE);scene.add(w);mazeObjects.push(w)}else if(mazeGrid[z][x]===2){doorObject=new THREE.Mesh(wg,doorMaterial);doorObject.position.set((x-MAZE_SIZE/2+.5)*CELL_SIZE,WALL_HEIGHT/2,(z-MAZE_SIZE/2+.5)*CELL_SIZE);doorObject.isDoor=!0;doorObject.gridPos={x,z};scene.add(doorObject);mazeObjects.push(doorObject)}}floorMaterial.map.repeat.set(MAZE_SIZE,MAZE_SIZE);const f=new THREE.Mesh(fg,floorMaterial);f.rotation.x=-Math.PI/2;scene.add(f);mazeObjects.push(f);roofMaterial.map.repeat.set(MAZE_SIZE,MAZE_SIZE);const r=new THREE.Mesh(fg,roofMaterial);r.position.y=WALL_HEIGHT;r.rotation.x=Math.PI/2;scene.add(r);mazeObjects.push(r)}
+        function findPath(s,e){const o=[s],c={},g={},f={};for(let z=0;z<MAZE_SIZE;z++)for(let x=0;x<MAZE_SIZE;x++){g[`${x},${z}`]=Infinity;f[`${x},${z}`]=Infinity}g[`${s.x},${s.z}`]=0;f[`${s.x},${s.z}`]=h(s,e);while(o.length>0){o.sort((a,b)=>f[`${a.x},${a.z}`]-f[`${b.x},${b.z}`]);const u=o.shift();if(u.x===e.x&&u.z===e.z)return p(c,u);const n=getNeighbors(u.x,u.z,false);for(const v of n){const t=g[`${u.x},${u.z}`]+1;if(t<g[`${v.x},${v.z}`]){c[`${v.x},${v.z}`]=u;g[`${v.x},${v.z}`]=t;f[`${v.x},${v.z}`]=t+h(v,e);if(!o.some(d=>d.x===v.x&&d.z===v.z))o.push(v)}}}return[]}function h(a,b){return Math.abs(a.x-b.x)+Math.abs(a.z-b.z)}function p(c,u){const t=[u];while(c[`${u.x},${u.z}`]){u=c[`${u.x},${u.z}`];t.unshift(u)}return t}
+        function getNeighbors(x,z,wallsOnly){const n=[],d=[[0,1],[0,-1],[1,0],[-1,0]];for(const[dx,dz]of d){const nx=x+dx,nz=z+dz;if(nx>=0&&nx<MAZE_SIZE&&nz>=0&&nz<MAZE_SIZE){const tile=mazeGrid[nz][nx];if((wallsOnly&&tile!==0)||(!wallsOnly&&tile===0))n.push({x:nx,z:nz})}}return n}
+        
+        // --- ANIMATION LOOP AND UPDATES ---
+        function updateEnemies(delta) { const p=playerObject.position,pgx=Math.floor(p.x/CELL_SIZE+MAZE_SIZE/2),pgz=Math.floor(p.z/CELL_SIZE+MAZE_SIZE/2),cwp=new THREE.Vector3();camera.getWorldPosition(cwp);for(const e of enemies){e.mesh.lookAt(cwp);e.pathCooldown-=delta;if(e.pathCooldown<=0&&pgx>=0&&pgz>=0){const n=findPath({x:e.gridX,z:e.gridZ},{x:pgx,z:pgz});if(n.length>0)e.path=n;e.pathCooldown=.5}if(e.path.length>1){const nn=e.path[1],tp=new THREE.Vector3((nn.x-MAZE_SIZE/2+.5)*CELL_SIZE,WALL_HEIGHT/2,(nn.z-MAZE_SIZE/2+.5)*CELL_SIZE),d=tp.clone().sub(e.mesh.position).normalize();e.mesh.position.add(d.multiplyScalar(ENEMY_SPEED*delta));if(e.mesh.position.distanceTo(tp)<.1){e.mesh.position.copy(tp);e.gridX=nn.x;e.gridZ=nn.z;e.path.shift()}}}}
+        
+        function animate() { requestAnimationFrame(animate); const t=performance.now(),d=(t-lastTime)/1e3;if(gameState==='PLAYING'){updatePlayer(d);updateEnemies(d);checkCollisions();if(isEsp)updateEsp();}renderer.render(scene,camera);lastTime=t}
+        function updatePlayer(delta) { 
+            if(keyObject) keyObject.rotation.y += 2 * delta;
+
+            const settings = DIFFICULTY_SETTINGS[currentDifficulty];
+            if (damageCooldownTimer > 0) damageCooldownTimer -= delta;
+            if (playerHealth < PLAYER_HEALTH_MAX) {
+                playerHealth = Math.min(PLAYER_HEALTH_MAX, playerHealth + settings.healthRegenRate * delta);
+                updateHealthBar();
+            }
+
+            const baseSpeed = Number(document.getElementById('speed-slider').value);
+            const sprintSpeed = baseSpeed * PLAYER_SPRINT_SPEED_MULTIPLIER;
+            const currentSpeed = isSprinting && stamina > 0 ? sprintSpeed : baseSpeed;
+            
+            playerVelocity.x -= playerVelocity.x * 10 * delta;
+            playerVelocity.z -= playerVelocity.z * 10 * delta;
+            
+            const dir=new THREE.Vector3();if(moveForward)dir.z=1;if(moveBackward)dir.z=-1;if(moveLeft)dir.x=-1;if(moveRight)dir.x=1;dir.normalize();
+            if(moveForward||moveBackward)playerVelocity.z+=dir.z*currentSpeed*delta*10;if(moveLeft||moveRight)playerVelocity.x+=dir.x*currentSpeed*delta*10;
+            
+            const op=playerObject.position.clone();
+            controls.moveRight(playerVelocity.x*delta);
+            controls.moveForward(playerVelocity.z*delta);
+            
+            if (isFlying) {
+                const flySpeed = baseSpeed;
+                if(moveUp) playerObject.position.y += flySpeed * delta;
+                if(moveDown) playerObject.position.y -= flySpeed * delta;
+            } else {
+                 playerObject.position.y = WALL_HEIGHT / 2;
+            }
+
+            if (!isNoclip) {
+                const pr=.8,iw=(wx,wz)=>{const gx=Math.floor(wx/CELL_SIZE+MAZE_SIZE/2),gz=Math.floor(wz/CELL_SIZE+MAZE_SIZE/2);if(gx<0||gx>=MAZE_SIZE||gz<0||gz>=MAZE_SIZE)return!0;return mazeGrid[gz]?.[gx]!==0},cc=(px,pz)=>iw(px-pr,pz-pr)||iw(px+pr,pz-pr)||iw(px-pr,pz+pr)||iw(px+pr,pz+pr);
+                const np=playerObject.position.clone();
+                if(cc(np.x,op.z))playerObject.position.x=op.x;
+                if(cc(playerObject.position.x,np.z))playerObject.position.z=op.z;
+            }
+
+            if(!isInfStamina && isSprinting&&(moveForward||moveBackward||moveLeft||moveRight))stamina=Math.max(0,stamina-STAMINA_DEPLETE_RATE*delta);else stamina=Math.min(STAMINA_MAX,stamina+STAMINA_REGEN_RATE*delta);updateStaminaBar()}
+        
+        function updateHealthBar() { healthBar.style.width = `${playerHealth}%`; }
+        function updateStaminaBar() { staminaBar.style.width = `${stamina}%`; }
+
+        function takeDamage() {
+            if (damageCooldownTimer > 0) return;
+            const settings = DIFFICULTY_SETTINGS[currentDifficulty];
+            playerHealth = Math.max(0, playerHealth - settings.enemyDamage);
+            updateHealthBar();
+            damageFlash.style.animation = 'none';
+            void damageFlash.offsetWidth;
+            damageFlash.style.animation = 'flash 0.3s ease-out';
+            damageCooldownTimer = settings.damageCooldown;
+            if (playerHealth <= 0) gameOver();
+        }
+
+        function checkCollisions() { 
+            if(!exitLight)return;
+            for(const e of enemies) if(playerObject.position.distanceTo(e.mesh.position)<CELL_SIZE/2.5) takeDamage();
+            if(playerObject.position.distanceTo(exitLight.position)<CELL_SIZE/2) winGame();
+            if(keyObject && playerObject.position.distanceTo(keyObject.position) < CELL_SIZE/2) {
+                hasKey = true; keyIcon.style.display = 'block';
+                scene.remove(keyObject); keyObject = null;
+            }
+            if(doorObject && hasKey && playerObject.position.distanceTo(doorObject.position) < CELL_SIZE) {
+                mazeGrid[doorObject.gridPos.z][doorObject.gridPos.x] = 0;
+                scene.remove(doorObject); doorObject = null;
+            }
+        }
+        function gameOver() { gameState='GAME_OVER';controls.unlock();blocker.style.display='flex';deathScreen.style.display='block';hud.style.display='none';crosshair.style.display='none' }
+        function winGame() { gameState='MENU';controls.unlock();blocker.style.display='flex';startMenu.style.display='block';startMenu.querySelector('h1').innerText="You Escaped!";startMenu.querySelector('p').innerHTML="But for how long?";hud.style.display='none';crosshair.style.display='none' }
+        
+        // --- MOD MENU FUNCTIONS ---
+        function toggleEsp(enabled) {
+            isEsp = enabled;
+            while(espHelpers.children.length) espHelpers.remove(espHelpers.children[0]);
+            if(isEsp) {
+                enemies.forEach(enemy => {
+                    const box = new THREE.BoxHelper(enemy.mesh, 0xff0000);
+                    box.material.depthTest = false;
+                    espHelpers.add(box);
+                });
+            }
+        }
+        function updateEsp() {
+            for(let i = 0; i < enemies.length; i++) {
+                if(espHelpers.children[i]) {
+                    espHelpers.children[i].update();
+                }
+            }
+        }
+        
+        // --- EVENT LISTENERS ---
+        function setupEventListeners() {
+            function selectDifficultyAndStart(difficulty) { blocker.style.display = 'none'; startMenu.style.display = 'none'; controls.lock(); startGame(difficulty); }
+            document.getElementById('easy-button').addEventListener('click', () => selectDifficultyAndStart('EASY'));
+            document.getElementById('medium-button').addEventListener('click', () => selectDifficultyAndStart('MEDIUM'));
+            document.getElementById('hard-button').addEventListener('click', () => selectDifficultyAndStart('HARD'));
+            document.getElementById('extreme-button').addEventListener('click', () => selectDifficultyAndStart('EXTREME'));
+            resumeButton.addEventListener('click', () => { blocker.style.display = 'none'; pauseMenu.style.display = 'none'; controls.lock(); });
+            restartButtonPause.addEventListener('click', () => { pauseMenu.style.display = 'none'; startGame(currentDifficulty); });
+            restartButtonDeath.addEventListener('click', () => { deathScreen.style.display = 'none'; startGame(currentDifficulty); controls.lock(); });
+            controls.addEventListener('lock', () => { if(gameState === 'PLAYING' || gameState === 'PAUSED') { gameState = 'PLAYING'; blocker.style.display = 'none'; pauseMenu.style.display = 'none'; hud.style.display = 'flex'; crosshair.style.display = 'block'; modMenu.style.display = 'none'; } });
+            controls.addEventListener('unlock', () => { if (gameState === 'PLAYING') { gameState = 'PAUSED'; blocker.style.display = 'flex'; pauseMenu.style.display = 'block'; hud.style.display = 'none'; crosshair.style.display = 'none'; } });
+            document.addEventListener('keydown', (e) => { 
+                if (e.altKey && e.code === 'KeyX') {
+                    modMenu.style.display = modMenu.style.display === 'block' ? 'none' : 'block';
+                }
+                switch (e.code) { case 'KeyW': moveForward=true; break; case 'KeyA': moveLeft=true; break; case 'KeyS': moveBackward=true; break; case 'KeyD': moveRight=true; break; case 'ShiftLeft': isSprinting=true; break; case 'Space': moveUp=true; break; case 'ControlLeft': moveDown=true; break; } 
+            });
+            document.addEventListener('keyup', (e) => { switch (e.code) { case 'KeyW': moveForward=false; break; case 'KeyA': moveLeft=false; break; case 'KeyS': moveBackward=false; break; case 'KeyD': moveRight=false; break; case 'ShiftLeft': isSprinting=false; break; case 'Space': moveUp=false; break; case 'ControlLeft': moveDown=false; break;} });
+            window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
+
+            // Mod Menu Event Listeners
+            document.getElementById('noclip-toggle').addEventListener('change', (e) => isNoclip = e.target.checked);
+            document.getElementById('esp-toggle').addEventListener('change', (e) => toggleEsp(e.target.checked));
+            document.getElementById('fly-toggle').addEventListener('change', (e) => isFlying = e.target.checked);
+            document.getElementById('stamina-toggle').addEventListener('change', (e) => isInfStamina = e.target.checked);
+            document.getElementById('teleport-exit-btn').addEventListener('click', () => { if(exitLight) playerObject.position.copy(exitLight.position); });
+            document.getElementById('give-key-btn').addEventListener('click', () => { if(keyObject) { hasKey = true; keyIcon.style.display = 'block'; scene.remove(keyObject); keyObject = null; }});
+            document.getElementById('heal-btn').addEventListener('click', () => { playerHealth = PLAYER_HEALTH_MAX; updateHealthBar(); });
+        }
+        init();
+    </script>
+</body>
+</html>            background-color: #ff4444;
+            box-shadow: 0 0 25px #ff0000;
+        }
+        #pause-menu {
+            display: none;
+        }
+        #death-screen {
+            display: none;
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+        }
+        #jumpscare-image {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 10;
+        }
+        #death-content {
+            position: relative;
+            z-index: 20;
+            background-color: rgba(0,0,0,0.7);
+            padding: 20px;
+            border-radius: 15px;
+        }
+        #hud {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            display: none;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            align-items: flex-end;
+        }
+        .bar-container {
+            width: 200px;
+            height: 20px;
+            border: 2px solid #fff;
+            border-radius: 5px;
+            background-color: rgba(0,0,0,0.5);
+            overflow: hidden;
+        }
+        #stamina-bar {
+            width: 100%;
+            height: 100%;
+            background-color: #4CAF50;
+            transition: width 0.2s ease-in-out;
+        }
+        #health-bar {
+            width: 100%;
+            height: 100%;
+            background-color: #b30000;
+            transition: width 0.2s ease-in-out;
+        }
         #crosshair {
             position: absolute;
             top: 50%;
