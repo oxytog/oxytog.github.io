@@ -92,8 +92,12 @@
             bottom: 20px;
             right: 20px;
             display: none;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            align-items: flex-end;
         }
-        #stamina-bar-container {
+        .bar-container {
             width: 200px;
             height: 20px;
             border: 2px solid #fff;
@@ -107,6 +111,12 @@
             background-color: #4CAF50;
             transition: width 0.2s ease-in-out;
         }
+        #health-bar {
+            width: 100%;
+            height: 100%;
+            background-color: #b30000;
+            transition: width 0.2s ease-in-out;
+        }
         #crosshair {
             position: absolute;
             top: 50%;
@@ -118,9 +128,25 @@
             transform: translate(-50%, -50%);
             display: none;
         }
+        #damage-flash {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(255, 0, 0, 0.5);
+            opacity: 0;
+            pointer-events: none;
+            z-index: 9999;
+        }
+        @keyframes flash {
+            0% { opacity: 0.7; }
+            100% { opacity: 0; }
+        }
     </style>
 </head>
 <body>
+    <div id="damage-flash"></div>
     <div id="blocker">
         <!-- Start Menu with Difficulty Selection -->
         <div id="start-menu" class="ui-container">
@@ -143,14 +169,17 @@
         <div id="death-screen" class="ui-container">
             <img id="jumpscare-image" src="" alt="You were caught">
             <div id="death-content">
-                <h1>You Were Caught</h1>
+                <h1>You Died</h1>
                 <div id="restart-button-death" class="button">Try Again</div>
             </div>
         </div>
     </div>
 
     <div id="hud">
-        <div id="stamina-bar-container">
+        <div id="health-bar-container" class="bar-container">
+            <div id="health-bar"></div>
+        </div>
+        <div id="stamina-bar-container" class="bar-container">
             <div id="stamina-bar"></div>
         </div>
     </div>
@@ -175,6 +204,7 @@
         const PLAYER_SPEED = 5.0;
         const PLAYER_SPRINT_SPEED = 9.0;
         const ENEMY_SPEED = 4.8;
+        const PLAYER_HEALTH_MAX = 100;
         const STAMINA_MAX = 100;
         const STAMINA_DEPLETE_RATE = 25;
         const STAMINA_REGEN_RATE = 10;
@@ -185,22 +215,34 @@
             EASY: {
                 numEnemies: 1,
                 lightIntensity: { hemi: 2.5, ambient: 1.5, player: 6 },
-                exitDistanceFactor: 0.25
+                exitDistanceFactor: 0.25,
+                enemyDamage: 25,
+                healthRegenRate: 5, // points per second
+                damageCooldown: 2 // seconds
             },
             MEDIUM: {
                 numEnemies: 2,
                 lightIntensity: { hemi: 2.0, ambient: 1.2, player: 5 },
-                exitDistanceFactor: 0.5
+                exitDistanceFactor: 0.5,
+                enemyDamage: 35,
+                healthRegenRate: 4,
+                damageCooldown: 1.5
             },
             HARD: {
                 numEnemies: 3,
                 lightIntensity: { hemi: 1.5, ambient: 0.8, player: 4 },
-                exitDistanceFactor: 0.75
+                exitDistanceFactor: 0.75,
+                enemyDamage: 40,
+                healthRegenRate: 3,
+                damageCooldown: 1.2
             },
             EXTREME: {
                 numEnemies: 4,
                 lightIntensity: { hemi: 1.0, ambient: 0.5, player: 3.5 },
-                exitDistanceFactor: 0.9
+                exitDistanceFactor: 0.9,
+                enemyDamage: 50,
+                healthRegenRate: 2,
+                damageCooldown: 1.0
             }
         };
 
@@ -217,7 +259,9 @@
         // --- GAME STATE ---
         let gameState = 'MENU';
         let currentDifficulty = 'MEDIUM';
+        let playerHealth = PLAYER_HEALTH_MAX;
         let stamina = STAMINA_MAX;
+        let damageCooldownTimer = 0;
         
         // --- DOM ELEMENTS ---
         const blocker = document.getElementById('blocker');
@@ -228,9 +272,11 @@
         const restartButtonPause = document.getElementById('restart-button-pause');
         const restartButtonDeath = document.getElementById('restart-button-death');
         const hud = document.getElementById('hud');
+        const healthBar = document.getElementById('health-bar');
         const staminaBar = document.getElementById('stamina-bar');
         const crosshair = document.getElementById('crosshair');
         const jumpscareImg = document.getElementById('jumpscare-image');
+        const damageFlash = document.getElementById('damage-flash');
 
         // --- TEXTURES AND MATERIALS ---
         const textureLoader = new THREE.TextureLoader();
@@ -253,7 +299,7 @@
         const enemyTextureUrl = 'tylerhall.png';
         const enemyTexture = loadTexture(enemyTextureUrl, 'https://placehold.co/256x256/000000/ff0000?text=ENEMY');
         const enemyMaterial = new THREE.MeshBasicMaterial({ map: enemyTexture, transparent: true });
-        jumpscareImg.onerror = () => { jumpscareImg.src = 'https://placehold.co/1920x1080/000000/ff0000?text=You+Were+Caught'; };
+        jumpscareImg.onerror = () => { jumpscareImg.src = 'https://placehold.co/1920x1080/000000/ff0000?text=You+Died'; };
         jumpscareImg.src = enemyTextureUrl;
 
         // --- INITIALIZATION ---
@@ -270,7 +316,6 @@
             playerObject = controls.getObject();
             scene.add(playerObject);
 
-            // Create lights once, their intensity will be set in startGame
             hemiLight = new THREE.HemisphereLight(0x888888, 0x000000, 1);
             scene.add(hemiLight);
             ambientLight = new THREE.AmbientLight(0x909090, 1);
@@ -288,7 +333,6 @@
             currentDifficulty = difficulty;
             const settings = DIFFICULTY_SETTINGS[difficulty];
 
-            // Set light intensities based on difficulty
             hemiLight.intensity = settings.lightIntensity.hemi;
             ambientLight.intensity = settings.lightIntensity.ambient;
             playerLight.intensity = settings.lightIntensity.player;
@@ -298,7 +342,9 @@
             if (exitLight) scene.remove(exitLight);
             
             playerVelocity.set(0, 0, 0);
+            playerHealth = PLAYER_HEALTH_MAX;
             stamina = STAMINA_MAX;
+            updateHealthBar();
             updateStaminaBar();
 
             mazeGrid = generateMaze(MAZE_SIZE, MAZE_SIZE);
@@ -317,18 +363,12 @@
                  enemies.push({ mesh, gridX: startPos.x, gridZ: startPos.z, path: [], pathCooldown: Math.random() * 0.5 + 0.2 });
             }
             
-            // Calculate exit position and ensure it's on a path
             let exitX = Math.max(1, Math.floor(MAZE_SIZE * settings.exitDistanceFactor));
             let exitZ = Math.max(1, Math.floor(MAZE_SIZE * settings.exitDistanceFactor));
             while(mazeGrid[exitZ] && mazeGrid[exitZ][exitX] === 1) {
                 exitX++;
-                if (exitX >= MAZE_SIZE -1) {
-                    exitX = 1;
-                    exitZ++;
-                }
-                if (exitZ >= MAZE_SIZE - 1) {
-                    exitZ = 1; // Failsafe
-                }
+                if (exitX >= MAZE_SIZE -1) { exitX = 1; exitZ++; }
+                if (exitZ >= MAZE_SIZE - 1) { exitZ = 1; }
             }
 
             exitLight = new THREE.PointLight(0x00ff00, 5, 10);
@@ -336,7 +376,7 @@
             scene.add(exitLight);
 
             gameState = 'PLAYING';
-            hud.style.display = 'block';
+            hud.style.display = 'flex';
             crosshair.style.display = 'block';
         }
         
@@ -351,9 +391,46 @@
         function updateEnemies(delta) { const p=playerObject.position,pgx=Math.floor(p.x/CELL_SIZE+MAZE_SIZE/2),pgz=Math.floor(p.z/CELL_SIZE+MAZE_SIZE/2),cwp=new THREE.Vector3();camera.getWorldPosition(cwp);for(const e of enemies){e.mesh.lookAt(cwp);e.pathCooldown-=delta;if(e.pathCooldown<=0&&pgx>=0&&pgz>=0){const n=findPath({x:e.gridX,z:e.gridZ},{x:pgx,z:pgz});if(n.length>0)e.path=n;e.pathCooldown=.5}if(e.path.length>1){const nn=e.path[1],tp=new THREE.Vector3((nn.x-MAZE_SIZE/2+.5)*CELL_SIZE,WALL_HEIGHT/2,(nn.z-MAZE_SIZE/2+.5)*CELL_SIZE),d=tp.clone().sub(e.mesh.position).normalize();e.mesh.position.add(d.multiplyScalar(ENEMY_SPEED*delta));if(e.mesh.position.distanceTo(tp)<.1){e.mesh.position.copy(tp);e.gridX=nn.x;e.gridZ=nn.z;e.path.shift()}}}}
         
         function animate() { requestAnimationFrame(animate); const t=performance.now(),d=(t-lastTime)/1e3;if(gameState==='PLAYING'){updatePlayer(d);updateEnemies(d);checkCollisions()}renderer.render(scene,camera);lastTime=t}
-        function updatePlayer(delta) { const s=isSprinting&&stamina>0?PLAYER_SPRINT_SPEED:PLAYER_SPEED;playerVelocity.x-=playerVelocity.x*10*delta;playerVelocity.z-=playerVelocity.z*10*delta;const d=new THREE.Vector3();if(moveForward)d.z=1;if(moveBackward)d.z=-1;if(moveLeft)d.x=-1;if(moveRight)d.x=1;d.normalize();if(moveForward||moveBackward)playerVelocity.z+=d.z*s*delta*10;if(moveLeft||moveRight)playerVelocity.x+=d.x*s*delta*10;const pr=.8,iw=(wx,wz)=>{const gx=Math.floor(wx/CELL_SIZE+MAZE_SIZE/2),gz=Math.floor(wz/CELL_SIZE+MAZE_SIZE/2);if(gx<0||gx>=MAZE_SIZE||gz<0||gz>=MAZE_SIZE)return!0;return mazeGrid[gz]?.[gx]===1},cc=(px,pz)=>iw(px-pr,pz-pr)||iw(px+pr,pz-pr)||iw(px-pr,pz+pr)||iw(px+pr,pz+pr);const op=playerObject.position.clone();controls.moveRight(playerVelocity.x*delta);controls.moveForward(playerVelocity.z*delta);const np=playerObject.position.clone();if(cc(np.x,op.z))playerObject.position.x=op.x;if(cc(playerObject.position.x,np.z))playerObject.position.z=op.z;if(isSprinting&&(moveForward||moveBackward||moveLeft||moveRight))stamina=Math.max(0,stamina-STAMINA_DEPLETE_RATE*delta);else stamina=Math.min(STAMINA_MAX,stamina+STAMINA_REGEN_RATE*delta);updateStaminaBar()}
-        function updateStaminaBar() { staminaBar.style.width = `${stamina}%` }
-        function checkCollisions() { if(!exitLight)return;for(const e of enemies)if(playerObject.position.distanceTo(e.mesh.position)<CELL_SIZE/2.5){gameOver();return}if(playerObject.position.distanceTo(exitLight.position)<CELL_SIZE/2)winGame()}
+        function updatePlayer(delta) { 
+            const settings = DIFFICULTY_SETTINGS[currentDifficulty];
+            // Cooldowns and Regeneration
+            if (damageCooldownTimer > 0) damageCooldownTimer -= delta;
+            if (playerHealth < PLAYER_HEALTH_MAX) {
+                playerHealth = Math.min(PLAYER_HEALTH_MAX, playerHealth + settings.healthRegenRate * delta);
+                updateHealthBar();
+            }
+
+            const s=isSprinting&&stamina>0?PLAYER_SPRINT_SPEED:PLAYER_SPEED;playerVelocity.x-=playerVelocity.x*10*delta;playerVelocity.z-=playerVelocity.z*10*delta;const d=new THREE.Vector3();if(moveForward)d.z=1;if(moveBackward)d.z=-1;if(moveLeft)d.x=-1;if(moveRight)d.x=1;d.normalize();if(moveForward||moveBackward)playerVelocity.z+=d.z*s*delta*10;if(moveLeft||moveRight)playerVelocity.x+=d.x*s*delta*10;const pr=.8,iw=(wx,wz)=>{const gx=Math.floor(wx/CELL_SIZE+MAZE_SIZE/2),gz=Math.floor(wz/CELL_SIZE+MAZE_SIZE/2);if(gx<0||gx>=MAZE_SIZE||gz<0||gz>=MAZE_SIZE)return!0;return mazeGrid[gz]?.[gx]===1},cc=(px,pz)=>iw(px-pr,pz-pr)||iw(px+pr,pz-pr)||iw(px-pr,pz+pr)||iw(px+pr,pz+pr);const op=playerObject.position.clone();controls.moveRight(playerVelocity.x*delta);controls.moveForward(playerVelocity.z*delta);const np=playerObject.position.clone();if(cc(np.x,op.z))playerObject.position.x=op.x;if(cc(playerObject.position.x,np.z))playerObject.position.z=op.z;if(isSprinting&&(moveForward||moveBackward||moveLeft||moveRight))stamina=Math.max(0,stamina-STAMINA_DEPLETE_RATE*delta);else stamina=Math.min(STAMINA_MAX,stamina+STAMINA_REGEN_RATE*delta);updateStaminaBar()}
+        
+        function updateHealthBar() { healthBar.style.width = `${playerHealth}%`; }
+        function updateStaminaBar() { staminaBar.style.width = `${stamina}%`; }
+
+        function takeDamage() {
+            if (damageCooldownTimer > 0) return;
+            const settings = DIFFICULTY_SETTINGS[currentDifficulty];
+            playerHealth = Math.max(0, playerHealth - settings.enemyDamage);
+            updateHealthBar();
+
+            damageFlash.style.animation = 'none';
+            void damageFlash.offsetWidth; // Trigger reflow
+            damageFlash.style.animation = 'flash 0.3s ease-out';
+            
+            damageCooldownTimer = settings.damageCooldown;
+
+            if (playerHealth <= 0) {
+                gameOver();
+            }
+        }
+
+        function checkCollisions() { 
+            if(!exitLight)return;
+            for(const e of enemies) {
+                if(playerObject.position.distanceTo(e.mesh.position)<CELL_SIZE/2.5){
+                    takeDamage();
+                }
+            }
+            if(playerObject.position.distanceTo(exitLight.position)<CELL_SIZE/2) winGame();
+        }
         function gameOver() { gameState='GAME_OVER';controls.unlock();blocker.style.display='flex';deathScreen.style.display='block';hud.style.display='none';crosshair.style.display='none' }
         function winGame() { gameState='MENU';controls.unlock();blocker.style.display='flex';startMenu.style.display='block';startMenu.querySelector('h1').innerText="You Escaped!";startMenu.querySelector('p').innerHTML="But for how long?";hud.style.display='none';crosshair.style.display='none' }
         
@@ -375,7 +452,7 @@
             restartButtonPause.addEventListener('click', () => { pauseMenu.style.display = 'none'; startGame(currentDifficulty); });
             restartButtonDeath.addEventListener('click', () => { deathScreen.style.display = 'none'; startGame(currentDifficulty); controls.lock(); });
 
-            controls.addEventListener('lock', () => { if(gameState === 'PLAYING' || gameState === 'PAUSED') { gameState = 'PLAYING'; blocker.style.display = 'none'; pauseMenu.style.display = 'none'; hud.style.display = 'block'; crosshair.style.display = 'block'; } });
+            controls.addEventListener('lock', () => { if(gameState === 'PLAYING' || gameState === 'PAUSED') { gameState = 'PLAYING'; blocker.style.display = 'none'; pauseMenu.style.display = 'none'; hud.style.display = 'flex'; crosshair.style.display = 'block'; } });
             controls.addEventListener('unlock', () => { if (gameState === 'PLAYING') { gameState = 'PAUSED'; blocker.style.display = 'flex'; pauseMenu.style.display = 'block'; hud.style.display = 'none'; crosshair.style.display = 'none'; } });
             document.addEventListener('keydown', (e) => { switch (e.code) { case 'KeyW': moveForward=true; break; case 'KeyA': moveLeft=true; break; case 'KeyS': moveBackward=true; break; case 'KeyD': moveRight=true; break; case 'ShiftLeft': isSprinting=true; break; } });
             document.addEventListener('keyup', (e) => { switch (e.code) { case 'KeyW': moveForward=false; break; case 'KeyA': moveLeft=false; break; case 'KeyS': moveBackward=false; break; case 'KeyD': moveRight=false; break; case 'ShiftLeft': isSprinting=false; break; } });
