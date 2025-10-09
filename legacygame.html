@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>The Maze of Tyler Hall</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #000;
+            color: #fff;
+            font-family: 'Courier New', Courier, monospace;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+        }
+        #blocker {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+        }
+        .ui-container {
+            max-width: 600px;
+        }
+        h1 {
+            font-size: 3em;
+            color: #ff4444;
+            text-shadow: 0 0 10px #ff0000;
+        }
+        p {
+            font-size: 1.2em;
+            line-height: 1.5;
+        }
+        .button {
+            background-color: #8B0000;
+            border: 2px solid #ff4444;
+            color: white;
+            padding: 15px 32px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 10px 2px;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: background-color 0.3s, box-shadow 0.3s;
+            box-shadow: 0 0 15px #ff0000;
+        }
+        .button:hover {
+            background-color: #ff4444;
+            box-shadow: 0 0 25px #ff0000;
+        }
+        #pause-menu {
+            display: none;
+        }
+        #death-screen {
+            display: none;
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+        }
+        #jumpscare-image {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 10;
+        }
+        #death-content {
+            position: relative;
+            z-index: 20;
+            background-color: rgba(0,0,0,0.7);
+            padding: 20px;
+            border-radius: 15px;
+        }
+        #hud {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            display: none;
+        }
+        #stamina-bar-container {
+            width: 200px;
+            height: 20px;
+            border: 2px solid #fff;
+            border-radius: 5px;
+            background-color: rgba(0,0,0,0.5);
+            overflow: hidden;
+        }
+        #stamina-bar {
+            width: 100%;
+            height: 100%;
+            background-color: #4CAF50;
+            transition: width 0.2s ease-in-out;
+        }
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 4px;
+            height: 4px;
+            background-color: rgba(255, 255, 255, 0.5);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="blocker">
+        <!-- Start Menu -->
+        <div id="start-menu" class="ui-container">
+            <h1>The Maze</h1>
+            <p>You are trapped in a dark, winding maze. Four entities are hunting you. Find the exit before they find you.</p>
+            <p><strong>Controls:</strong><br><strong>WASD:</strong> Move<br><strong>SHIFT:</strong> Sprint<br><strong>MOUSE:</strong> Look<br><strong>ESC:</strong> Pause</p>
+            <div id="play-button" class="button">Play</div>
+        </div>
+        <!-- Pause Menu -->
+        <div id="pause-menu" class="ui-container">
+            <h1>Paused</h1>
+            <div id="resume-button" class="button">Resume</div>
+            <div id="restart-button-pause" class="button">Restart</div>
+        </div>
+        <!-- Death Screen -->
+        <div id="death-screen" class="ui-container">
+            <img id="jumpscare-image" src="" alt="You were caught">
+            <div id="death-content">
+                <h1>You Were Caught</h1>
+                <div id="restart-button-death" class="button">Try Again</div>
+            </div>
+        </div>
+    </div>
+
+    <div id="hud">
+        <div id="stamina-bar-container">
+            <div id="stamina-bar"></div>
+        </div>
+    </div>
+    <div id="crosshair"></div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/"
+            }
+        }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+        // --- GAME CONSTANTS ---
+        const MAZE_SIZE = 25;
+        const WALL_HEIGHT = 5;
+        const CELL_SIZE = 5;
+        const PLAYER_SPEED = 5.0;
+        const PLAYER_SPRINT_SPEED = 9.0;
+        const ENEMY_SPEED = 4.8;
+        const STAMINA_MAX = 100;
+        const STAMINA_DEPLETE_RATE = 25;
+        const STAMINA_REGEN_RATE = 10;
+        const NUM_ENEMIES = 4;
+        const MAZE_COMPLEXITY_FACTOR = Math.floor((MAZE_SIZE * MAZE_SIZE) / 15);
+
+        // --- SCENE SETUP ---
+        let scene, camera, renderer, controls;
+        let playerObject; // The object that moves, containing the camera
+        let playerVelocity = new THREE.Vector3();
+        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false, isSprinting = false;
+        let lastTime = performance.now();
+        const mazeObjects = [];
+        let mazeGrid = [];
+        let enemies = [];
+        let exitLight;
+
+        // --- GAME STATE ---
+        let gameState = 'MENU';
+        let stamina = STAMINA_MAX;
+        
+        // --- DOM ELEMENTS ---
+        const blocker = document.getElementById('blocker');
+        const startMenu = document.getElementById('start-menu');
+        const pauseMenu = document.getElementById('pause-menu');
+        const deathScreen = document.getElementById('death-screen');
+        const playButton = document.getElementById('play-button');
+        const resumeButton = document.getElementById('resume-button');
+        const restartButtonPause = document.getElementById('restart-button-pause');
+        const restartButtonDeath = document.getElementById('restart-button-death');
+        const hud = document.getElementById('hud');
+        const staminaBar = document.getElementById('stamina-bar');
+        const crosshair = document.getElementById('crosshair');
+        const jumpscareImg = document.getElementById('jumpscare-image');
+
+        // --- REWRITTEN TEXTURE AND MATERIALS ---
+        const textureLoader = new THREE.TextureLoader();
+        
+        // FIX: Robust function to load a texture with a fallback URL
+        const loadTexture = (primaryUrl, fallbackUrl) => {
+            const texture = textureLoader.load(primaryUrl, 
+                undefined, // onLoad
+                undefined, // onProgress
+                (err) => { // onError
+                    console.error(`Failed to load ${primaryUrl}, loading fallback.`);
+                    // When the primary URL fails, load the fallback URL.
+                    // When the fallback loads, apply its image to the original texture object.
+                    textureLoader.load(fallbackUrl,
+                        (loadedFallbackTexture) => {
+                            texture.image = loadedFallbackTexture.image;
+                            texture.needsUpdate = true;
+                        }
+                    );
+                }
+            );
+            texture.wrapS = THREE.RepeatWrapping;
+            texture.wrapT = THREE.RepeatWrapping;
+            return texture;
+        };
+
+        const wallTexture = loadTexture('wall.png', 'https://placehold.co/512x512/333333/555555?text=Wall');
+        const wallMaterial = new THREE.MeshStandardMaterial({ map: wallTexture, roughness: 0.7, metalness: 0.2 });
+
+        const floorTexture = loadTexture('floor.png', 'https://placehold.co/512x512/444444/666666?text=Floor');
+        const floorMaterial = new THREE.MeshStandardMaterial({ map: floorTexture, roughness: 0.9, metalness: 0.1 });
+        
+        const roofTexture = loadTexture('roof.png', 'https://placehold.co/512x512/1a1a1a/2a2a2a?text=Roof');
+        const roofMaterial = new THREE.MeshStandardMaterial({ map: roofTexture });
+        
+        const enemyTextureUrl = 'tylerhall.png';
+        const enemyTexture = loadTexture(enemyTextureUrl, 'https://placehold.co/256x256/000000/ff0000?text=ENEMY');
+        const enemyMaterial = new THREE.MeshBasicMaterial({ map: enemyTexture, transparent: true });
+
+        // Set up the jumpscare image with a reliable fallback
+        jumpscareImg.onerror = () => {
+            jumpscareImg.src = 'https://placehold.co/1920x1080/000000/ff0000?text=You+Were+Caught';
+        };
+        jumpscareImg.src = enemyTextureUrl;
+
+        // --- INITIALIZATION ---
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x000000);
+            scene.fog = new THREE.Fog(0x000000, 15, 45);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.body.appendChild(renderer.domElement);
+
+            controls = new PointerLockControls(camera, renderer.domElement);
+            playerObject = controls.getObject();
+            scene.add(playerObject);
+
+            // --- LIGHTING ---
+            const hemiLight = new THREE.HemisphereLight(0x888888, 0x000000, 2.0);
+            scene.add(hemiLight);
+            const ambientLight = new THREE.AmbientLight(0x909090, 1.2);
+            scene.add(ambientLight);
+            const playerLight = new THREE.PointLight(0xffffff, 5, 35);
+            camera.add(playerLight);
+            playerLight.position.set(0, 1, 0);
+
+            setupEventListeners();
+            animate();
+        }
+
+        // --- GAME LOGIC ---
+        function startGame() {
+            mazeObjects.forEach(obj => scene.remove(obj)); mazeObjects.length = 0;
+            enemies.forEach(e => scene.remove(e.mesh)); enemies = [];
+            if (exitLight) scene.remove(exitLight);
+            
+            playerVelocity.set(0, 0, 0);
+            stamina = STAMINA_MAX;
+            updateStaminaBar();
+
+            mazeGrid = generateMaze(MAZE_SIZE, MAZE_SIZE);
+            addComplexityToMaze(mazeGrid);
+            removeDeadEnds(mazeGrid);
+            buildMaze();
+
+            const playerStartX = 1;
+            const playerStartZ = 1;
+            playerObject.position.set(
+                (playerStartX - MAZE_SIZE / 2 + 0.5) * CELL_SIZE,
+                WALL_HEIGHT / 2,
+                (playerStartZ - MAZE_SIZE / 2 + 0.5) * CELL_SIZE
+            );
+            
+            const enemyStartPositions = [
+                {x: MAZE_SIZE - 2, z: MAZE_SIZE - 2}, {x: 1, z: MAZE_SIZE - 2},
+                {x: MAZE_SIZE - 2, z: 1}, {x: MAZE_SIZE - 4, z: MAZE_SIZE - 4},
+            ];
+
+            for (let i = 0; i < NUM_ENEMIES; i++) {
+                 const enemyGeometry = new THREE.PlaneGeometry(CELL_SIZE * 0.8, CELL_SIZE * 0.8);
+                 const mesh = new THREE.Mesh(enemyGeometry, enemyMaterial);
+                 scene.add(mesh);
+                 const startPos = enemyStartPositions[i % enemyStartPositions.length];
+                 mesh.position.set(
+                    (startPos.x - MAZE_SIZE / 2 + 0.5) * CELL_SIZE, WALL_HEIGHT / 2, (startPos.z - MAZE_SIZE / 2 + 0.5) * CELL_SIZE
+                 );
+                 enemies.push({ mesh, gridX: startPos.x, gridZ: startPos.z, path: [], pathCooldown: Math.random() * 0.5 + 0.2 });
+            }
+            
+            const exitX = Math.floor(MAZE_SIZE / 2);
+            const exitZ = Math.floor(MAZE_SIZE / 2);
+            exitLight = new THREE.PointLight(0x00ff00, 5, 10);
+            exitLight.position.set((exitX - MAZE_SIZE / 2 + 0.5) * CELL_SIZE, WALL_HEIGHT / 2, (exitZ - MAZE_SIZE / 2 + 0.5) * CELL_SIZE);
+            scene.add(exitLight);
+
+            gameState = 'PLAYING';
+            hud.style.display = 'block';
+            crosshair.style.display = 'block';
+        }
+        
+        function generateMaze(width, height) { /* ... NO CHANGES ... */
+            const maze = Array(height).fill(null).map(() => Array(width).fill(1));
+            const stack = []; const startX = 1; const startZ = 1;
+            maze[startZ][startX] = 0; stack.push([startX, startZ]);
+            while (stack.length > 0) {
+                const [cx, cz] = stack[stack.length - 1]; const neighbors = [];
+                const directions = [[0, -2], [0, 2], [-2, 0], [2, 0]];
+                for (const [dx, dz] of directions) {
+                    const nx = cx + dx; const nz = cz + dz;
+                    if (nx > 0 && nx < width - 1 && nz > 0 && nz < height - 1 && maze[nz][nx] === 1) {
+                        neighbors.push([nx, nz]);
+                    }
+                }
+                if (neighbors.length > 0) {
+                    const [nx, nz] = neighbors[Math.floor(Math.random() * neighbors.length)];
+                    maze[nz][nx] = 0; maze[cz + (nz - cz) / 2][cx + (nx - cx) / 2] = 0;
+                    stack.push([nx, nz]);
+                } else { stack.pop(); }
+            }
+            return maze;
+        }
+        function addComplexityToMaze(maze) { /* ... NO CHANGES ... */
+            for (let i = 0; i < MAZE_COMPLEXITY_FACTOR; i++) {
+                const x = Math.floor(Math.random() * (MAZE_SIZE - 2)) + 1; const z = Math.floor(Math.random() * (MAZE_SIZE - 2)) + 1;
+                if (maze[z][x] === 1) {
+                    const horizontal = (maze[z][x-1] === 0 && maze[z][x+1] === 0);
+                    const vertical = (maze[z-1][x] === 0 && maze[z+1][x] === 0);
+                    if (horizontal || vertical) { maze[z][x] = 0; }
+                }
+            }
+        }
+        function removeDeadEnds(maze) { /* ... NO CHANGES ... */
+            for (let i = 0; i < 2; i++) {
+                const deadEnds = [];
+                for (let z = 1; z < MAZE_SIZE - 1; z++) {
+                    for (let x = 1; x < MAZE_SIZE - 1; x++) {
+                        if (maze[z][x] === 0) {
+                            let wallCount = 0;
+                            if (maze[z - 1][x] === 1) wallCount++; if (maze[z + 1][x] === 1) wallCount++;
+                            if (maze[z][x - 1] === 1) wallCount++; if (maze[z][x + 1] === 1) wallCount++;
+                            if (wallCount >= 3) { deadEnds.push({x, z}); }
+                        }
+                    }
+                }
+                deadEnds.forEach(end => {
+                    if (Math.random() > 0.4) {
+                        const potentialWalls = [];
+                        if (end.z > 1 && maze[end.z - 1][end.x] === 1) potentialWalls.push({x: end.x, z: end.z - 1});
+                        if (end.z < MAZE_SIZE - 2 && maze[end.z + 1][end.x] === 1) potentialWalls.push({x: end.x, z: end.z + 1});
+                        if (end.x > 1 && maze[end.z][end.x - 1] === 1) potentialWalls.push({x: end.x - 1, z: end.z});
+                        if (end.x < MAZE_SIZE - 2 && maze[end.z][end.x + 1] === 1) potentialWalls.push({x: end.x + 1, z: end.z});
+                        if(potentialWalls.length > 0) {
+                            const wallToRemove = potentialWalls[Math.floor(Math.random() * potentialWalls.length)];
+                            maze[wallToRemove.z][wallToRemove.x] = 0;
+                        }
+                    }
+                });
+            }
+        }
+        function buildMaze() { /* ... NO CHANGES ... */
+            const wallGeometry = new THREE.BoxGeometry(CELL_SIZE, WALL_HEIGHT, CELL_SIZE);
+            const floorGeometry = new THREE.PlaneGeometry(MAZE_SIZE * CELL_SIZE, MAZE_SIZE * CELL_SIZE);
+            for (let z = 0; z < MAZE_SIZE; z++) {
+                for (let x = 0; x < MAZE_SIZE; x++) {
+                    if (mazeGrid[z][x] === 1) {
+                        const wall = new THREE.Mesh(wallGeometry, wallMaterial);
+                        wall.position.set( (x - MAZE_SIZE / 2 + 0.5) * CELL_SIZE, WALL_HEIGHT / 2, (z - MAZE_SIZE / 2 + 0.5) * CELL_SIZE );
+                        scene.add(wall); mazeObjects.push(wall);
+                    }
+                }
+            }
+            floorMaterial.map.repeat.set(MAZE_SIZE, MAZE_SIZE);
+            const floor = new THREE.Mesh(floorGeometry, floorMaterial); floor.rotation.x = -Math.PI / 2;
+            scene.add(floor); mazeObjects.push(floor);
+            roofMaterial.map.repeat.set(MAZE_SIZE, MAZE_SIZE);
+            const roof = new THREE.Mesh(floorGeometry, roofMaterial); roof.position.y = WALL_HEIGHT;
+            roof.rotation.x = Math.PI / 2;
+            scene.add(roof); mazeObjects.push(roof);
+        }
+        function findPath(start, end) { /* ... NO CHANGES ... */
+             const openSet = [start]; const cameFrom = {}; const gScore = {}; const fScore = {};
+            for (let z = 0; z < MAZE_SIZE; z++) { for (let x = 0; x < MAZE_SIZE; x++) { gScore[`${x},${z}`] = Infinity; fScore[`${x},${z}`] = Infinity; } }
+            gScore[`${start.x},${start.z}`] = 0; fScore[`${start.x},${start.z}`] = heuristic(start, end);
+            while (openSet.length > 0) {
+                openSet.sort((a, b) => fScore[`${a.x},${a.z}`] - fScore[`${b.x},${b.z}`]);
+                const current = openSet.shift();
+                if (current.x === end.x && current.z === end.z) { return reconstructPath(cameFrom, current); }
+                const neighbors = getNeighbors(current.x, current.z);
+                for (const neighbor of neighbors) {
+                    const tentativeGScore = gScore[`${current.x},${current.z}`] + 1;
+                    if (tentativeGScore < gScore[`${neighbor.x},${neighbor.z}`]) {
+                        cameFrom[`${neighbor.x},${neighbor.z}`] = current;
+                        gScore[`${neighbor.x},${neighbor.z}`] = tentativeGScore;
+                        fScore[`${neighbor.x},${neighbor.z}`] = tentativeGScore + heuristic(neighbor, end);
+                        if (!openSet.some(node => node.x === neighbor.x && node.z === neighbor.z)) {
+                            openSet.push(neighbor);
+                        }
+                    }
+                }
+            }
+            return [];
+        }
+        function heuristic(a, b) { return Math.abs(a.x - b.x) + Math.abs(a.z - b.z); }
+        function getNeighbors(x, z) { /* ... NO CHANGES ... */
+            const neighbors = []; const directions = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+            for (const [dx, dz] of directions) {
+                const nx = x + dx; const nz = z + dz;
+                if (nx >= 0 && nx < MAZE_SIZE && nz >= 0 && nz < MAZE_SIZE && mazeGrid[nz][nx] === 0) {
+                    neighbors.push({ x: nx, z: nz });
+                }
+            } return neighbors;
+        }
+        function reconstructPath(cameFrom, current) { /* ... NO CHANGES ... */
+            const totalPath = [current];
+            while (cameFrom[`${current.x},${current.z}`]) { current = cameFrom[`${current.x},${current.z}`]; totalPath.unshift(current); }
+            return totalPath;
+        }
+        
+        function updateEnemies(delta) {
+            const playerPos = playerObject.position;
+            const playerGridX = Math.floor((playerPos.x / CELL_SIZE) + MAZE_SIZE / 2);
+            const playerGridZ = Math.floor((playerPos.z / CELL_SIZE) + MAZE_SIZE / 2);
+            const cameraWorldPos = new THREE.Vector3();
+            camera.getWorldPosition(cameraWorldPos);
+
+            for(const enemy of enemies) {
+                enemy.mesh.lookAt(cameraWorldPos);
+                enemy.pathCooldown -= delta;
+                if (enemy.pathCooldown <= 0 && playerGridX >=0 && playerGridZ >= 0) {
+                    const newPath = findPath( { x: enemy.gridX, z: enemy.gridZ }, { x: playerGridX, z: playerGridZ } );
+                    if (newPath.length > 0) { enemy.path = newPath; }
+                    enemy.pathCooldown = 0.5;
+                }
+                if (enemy.path.length > 1) {
+                    const nextNode = enemy.path[1];
+                    const targetPosition = new THREE.Vector3( (nextNode.x - MAZE_SIZE / 2 + 0.5) * CELL_SIZE, WALL_HEIGHT / 2, (nextNode.z - MAZE_SIZE / 2 + 0.5) * CELL_SIZE );
+                    const direction = targetPosition.clone().sub(enemy.mesh.position).normalize();
+                    enemy.mesh.position.add(direction.multiplyScalar(ENEMY_SPEED * delta));
+                    if (enemy.mesh.position.distanceTo(targetPosition) < 0.1) {
+                        enemy.mesh.position.copy(targetPosition);
+                        enemy.gridX = nextNode.x; enemy.gridZ = nextNode.z;
+                        enemy.path.shift();
+                    }
+                }
+            }
+        }
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = performance.now();
+            const delta = (time - lastTime) / 1000;
+            if (gameState === 'PLAYING') {
+                updatePlayer(delta);
+                updateEnemies(delta);
+                checkCollisions();
+            }
+            renderer.render(scene, camera);
+            lastTime = time;
+        }
+
+        function updatePlayer(delta) {
+            const speed = isSprinting && stamina > 0 ? PLAYER_SPRINT_SPEED : PLAYER_SPEED;
+            playerVelocity.x -= playerVelocity.x * 10.0 * delta;
+            playerVelocity.z -= playerVelocity.z * 10.0 * delta;
+            
+            const direction = new THREE.Vector3();
+            // FIX: Corrected A/D movement direction
+            if (moveForward) direction.z = 1; if (moveBackward) direction.z = -1;
+            if (moveLeft) direction.x = -1; if (moveRight) direction.x = 1;
+            direction.normalize();
+            
+            if (moveForward || moveBackward) playerVelocity.z += direction.z * speed * delta * 10;
+            if (moveLeft || moveRight) playerVelocity.x += direction.x * speed * delta * 10;
+
+            const playerRadius = 0.8;
+            const isWallAt = (worldX, worldZ) => {
+                const gridX = Math.floor(worldX / CELL_SIZE + MAZE_SIZE / 2);
+                const gridZ = Math.floor(worldZ / CELL_SIZE + MAZE_SIZE / 2);
+                if (gridX < 0 || gridX >= MAZE_SIZE || gridZ < 0 || gridZ >= MAZE_SIZE) return true;
+                return mazeGrid[gridZ]?.[gridX] === 1;
+            };
+
+            const checkCollision = (posX, posZ) => {
+                return isWallAt(posX - playerRadius, posZ - playerRadius) ||
+                       isWallAt(posX + playerRadius, posZ - playerRadius) ||
+                       isWallAt(posX - playerRadius, posZ + playerRadius) ||
+                       isWallAt(posX + playerRadius, posZ + playerRadius);
+            };
+
+            const oldPosition = playerObject.position.clone();
+            
+            controls.moveRight(playerVelocity.x * delta);
+            controls.moveForward(playerVelocity.z * delta);
+            
+            const newPosition = playerObject.position.clone();
+
+            if (checkCollision(newPosition.x, oldPosition.z)) {
+                playerObject.position.x = oldPosition.x;
+            }
+            if (checkCollision(playerObject.position.x, newPosition.z)) {
+                playerObject.position.z = oldPosition.z;
+            }
+
+            if (isSprinting && (moveForward || moveBackward || moveLeft || moveRight)) {
+                stamina = Math.max(0, stamina - STAMINA_DEPLETE_RATE * delta);
+            } else {
+                stamina = Math.min(STAMINA_MAX, stamina + STAMINA_REGEN_RATE * delta);
+            }
+            updateStaminaBar();
+        }
+        
+        function updateStaminaBar() { staminaBar.style.width = `${stamina}%`; }
+
+        function checkCollisions() {
+            if (!exitLight) return;
+            for (const enemy of enemies) {
+                if (playerObject.position.distanceTo(enemy.mesh.position) < CELL_SIZE / 2.5) {
+                    gameOver(); return;
+                }
+            }
+            if (playerObject.position.distanceTo(exitLight.position) < CELL_SIZE / 2) {
+                winGame();
+            }
+        }
+
+        function gameOver() { /* ... NO CHANGES ... */
+            gameState = 'GAME_OVER'; controls.unlock(); blocker.style.display = 'flex';
+            deathScreen.style.display = 'block'; hud.style.display = 'none'; crosshair.style.display = 'none';
+        }
+        function winGame() { /* ... NO CHANGES ... */
+            gameState = 'MENU'; controls.unlock(); blocker.style.display = 'flex';
+            startMenu.style.display = 'block'; startMenu.querySelector('h1').innerText = "You Escaped!";
+            startMenu.querySelector('p').innerHTML = "But for how long?"; playButton.innerText = "Play Again";
+            hud.style.display = 'none'; crosshair.style.display = 'none';
+        }
+        function setupEventListeners() {
+            playButton.addEventListener('click', () => { blocker.style.display = 'none'; startMenu.style.display = 'none'; controls.lock(); startGame(); });
+            resumeButton.addEventListener('click', () => { blocker.style.display = 'none'; pauseMenu.style.display = 'none'; controls.lock(); });
+            restartButtonPause.addEventListener('click', () => { pauseMenu.style.display = 'none'; startGame(); });
+            restartButtonDeath.addEventListener('click', () => { deathScreen.style.display = 'none'; startGame(); controls.lock(); });
+            controls.addEventListener('lock', () => { if(gameState === 'PLAYING' || gameState === 'PAUSED') { gameState = 'PLAYING'; blocker.style.display = 'none'; pauseMenu.style.display = 'none'; hud.style.display = 'block'; crosshair.style.display = 'block'; } });
+            controls.addEventListener('unlock', () => { if (gameState === 'PLAYING') { gameState = 'PAUSED'; blocker.style.display = 'flex'; pauseMenu.style.display = 'block'; hud.style.display = 'none'; crosshair.style.display = 'none'; } });
+            document.addEventListener('keydown', (event) => { switch (event.code) { case 'KeyW': moveForward = true; break; case 'KeyA': moveLeft = true; break; case 'KeyS': moveBackward = true; break; case 'KeyD': moveRight = true; break; case 'ShiftLeft': isSprinting = true; break; } });
+            document.addEventListener('keyup', (event) => { switch (event.code) { case 'KeyW': moveForward = false; break; case 'KeyA': moveLeft = false; break; case 'KeyS': moveBackward = false; break; case 'KeyD': moveRight = false; break; case 'ShiftLeft': isSprinting = false; break; } });
+            window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
+        }
+        init();
+    </script>
+</body>
+</html>
